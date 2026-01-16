@@ -13,36 +13,40 @@ RunAction::RunAction()
   man->SetVerboseLevel( 1 );
     
 
-  man->CreateNtuple("LeftData1", "LeftData1");
+  man->CreateNtuple("RightData1", "Right sensors (sensor_Vol1)");  
   man->CreateNtupleDColumn("x");
   man->CreateNtupleDColumn("y");
-  man->CreateNtupleDColumn("z");
+  man->CreateNtupleIColumn("event");
   man->CreateNtupleIColumn("copyNo");
   man->FinishNtuple(0);
 
-  man->CreateNtuple("RightData2", "RightData2");
+  man->CreateNtuple("LeftData2", "Left sensors (sensor_Vol2)");  
   man->CreateNtupleDColumn("x");
   man->CreateNtupleDColumn("y");
-  man->CreateNtupleDColumn("z");
+  man->CreateNtupleIColumn("event");
   man->CreateNtupleIColumn("copyNo");
-  man->FinishNtuple(1);
+man->FinishNtuple(1);
 
   man->CreateNtuple("BottomData3", "BottomData3");
   man->CreateNtupleDColumn("x");
   man->CreateNtupleDColumn("y");
-  man->CreateNtupleDColumn("z");
+  man->CreateNtupleIColumn("event");
   man->CreateNtupleIColumn("copyNo");
   man->FinishNtuple(2);
 
   man->CreateNtuple("TopData4", "TopData4");
   man->CreateNtupleDColumn("x");
   man->CreateNtupleDColumn("y");
-  man->CreateNtupleDColumn("z");
+  man->CreateNtupleIColumn("event");
   man->CreateNtupleIColumn("copyNo");
   man->FinishNtuple(3);
 
     
- 
+  man->CreateH1("CopyNo_Right", "Number of photons detected in right sensor", 25, 0, 25);    
+  man->CreateH1("CopyNo_Top", "Number of photons detected in top sensor", 25, 0, 25);       
+  man->CreateH1("CopyNo_Left", "Number of photons detected in left sensor ", 25, 0, 25);     
+  man->CreateH1("CopyNo_Bottom", "Number of photons detected in bottom sensor", 25, 0, 25); 
+  
   man->CreateNtuple("x_reconstruction","x_reconstruction");
   man->CreateNtupleDColumn("x");
   man->FinishNtuple(4);

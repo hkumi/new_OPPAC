@@ -42,7 +42,7 @@ void PG::GeneratePrimaries(G4Event* anEvent)
     particleGun->GetCurrentSource()->GetEneDist()->SetMonoEnergy(2.5 * MeV);  // Set energy to 2.5 MeV
 
     // Set position and direction
-    particleGun->GetCurrentSource()->GetPosDist()->SetCentreCoords(G4ThreeVector(posi_x * mm, posi_y * mm, -19 * mm));
+    particleGun->GetCurrentSource()->GetPosDist()->SetCentreCoords(G4ThreeVector(posi_x * mm, posi_y * mm, -5 * mm));
     particleGun->GetCurrentSource()->GetAngDist()->SetParticleMomentumDirection(G4ThreeVector(0., 0., 1.));  // Set direction along z-axis
 
     // Generate the primary vertex in the event
