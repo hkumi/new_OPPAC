@@ -30,23 +30,12 @@ class DC : public G4VUserDetectorConstruction
     G4double fDensity;
     G4double fCollimatorLength;
     
-    // Materials
-    G4Material* fGasMaterial;
-    G4Material* fTeflon;
-    G4Material* fHDPE;
-    G4Material* fSilicon;
-    G4Material* fAluminium;
-    G4Material* fMylar;
-    G4Material* fVacuum;
-    G4Material* fLead;
-    G4Material* fPolyethylene;
-    G4Material* fBoratedPolyethylene;
-    G4Material* CF4;    
+    // Materials (only what we actually use)
+    G4Material* fTeflon;           // Collimator material
+    
     // Optical surfaces
     G4OpticalSurface* fSipmSurf;
     G4OpticalSurface* fMylarSurf;
-    G4OpticalSurface* fTeflonSurf;
-    G4OpticalSurface* fCf4SiSurface;
     
     // World volume
     G4VPhysicalVolume* fWorldPhys;
