@@ -27,14 +27,14 @@ RunAction::RunAction()
   man->CreateNtupleIColumn("copyNo");
 man->FinishNtuple(1);
 
-  man->CreateNtuple("BottomData3", "BottomData3");
+  man->CreateNtuple("TopData3", "TopData3");
   man->CreateNtupleDColumn("x");
   man->CreateNtupleDColumn("y");
   man->CreateNtupleIColumn("event");
   man->CreateNtupleIColumn("copyNo");
   man->FinishNtuple(2);
 
-  man->CreateNtuple("TopData4", "TopData4");
+  man->CreateNtuple("BottomData4", "BottomData4");
   man->CreateNtupleDColumn("x");
   man->CreateNtupleDColumn("y");
   man->CreateNtupleIColumn("event");
@@ -47,14 +47,15 @@ man->FinishNtuple(1);
   man->CreateH1("CopyNo_Left", "Number of photons detected in left sensor ", 25, 0, 25);     
   man->CreateH1("CopyNo_Bottom", "Number of photons detected in bottom sensor", 25, 0, 25); 
   
-  man->CreateNtuple("x_reconstruction","x_reconstruction");
-  man->CreateNtupleDColumn("x");
-  man->FinishNtuple(4);
+  man->CreateNtuple("xy_reconstruction", "Position Reconstruction");
+man->CreateNtupleDColumn("x");  // Column 0
+man->CreateNtupleDColumn("y");  // Column 1
+man->FinishNtuple(4);  // This becomes ntuple 4
 
-  man->CreateNtuple("y_reconstruction","y_reconstruction");
-  man->CreateNtupleDColumn("y");
-  man->FinishNtuple(5);
-
+man->CreateNtuple("cog_reconstruction", "Center of Gravity");
+man->CreateNtupleDColumn("x_cog");  // Column 0
+man->CreateNtupleDColumn("y_cog");  // Column 1  
+man->FinishNtuple(5);  // This becomes ntuple 5
   
  
   man->CreateH2("xy2 ","xy2", 100, -30, 30, 100, -30, 30);

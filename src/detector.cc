@@ -4,88 +4,215 @@
 #include <vector>
 #include <fstream>
 #include <sstream>
-#include <TFile.h>
 #include <TH1D.h>
 #include <TTree.h>
 #include "TF1.h"
+#include "TFile.h"
 #include "G4SDManager.hh"
 #include "G4String.hh"
 #include "G4HCofThisEvent.hh"
 #include "SensorHit.hh"
 #include "G4RunManager.hh"
 #include "G4UnitsTable.hh"
+#include "G4AnalysisManager.hh"
+
+// Initialize static members (ONLY HERE, not in header)
+TFile* MySensitiveDetector::analysisFile = nullptr;
+bool MySensitiveDetector::analysisFileCreated = false;
+std::mutex MySensitiveDetector::analysisFileMutex;
+
 MySensitiveDetector::MySensitiveDetector(G4String name) : G4VSensitiveDetector(name)
 {
     G4String HCname = "SensorCollection";
     collectionName.insert(HCname);
+    
+  
+    
+    SensorCollection = nullptr;  // Initialize to nullptr
 }
 
 MySensitiveDetector::~MySensitiveDetector()
-{}
+{
+   
+}
+
+
 
 void MySensitiveDetector::Initialize(G4HCofThisEvent* HCE) {
-    // Create the hits collection
+    if (!HCE) {
+        G4cerr << "Error: HCE is null in Initialize!" << G4endl;
+        return;
+    }
+    
     SensorCollection = new SensorHitsCollection(SensitiveDetectorName, collectionName[0]);
     
-    // Register the collection with the event
     static G4int HCID = -1;
     if (HCID < 0) {
         HCID = G4SDManager::GetSDMpointer()->GetCollectionID(collectionName[0]);
     }
     
-    if (HCE) {
-        HCE->AddHitsCollection(HCID, SensorCollection);
-    } else {
-        G4cerr << "Error: HCE is null in Initialize!" << G4endl;
+    HCE->AddHitsCollection(HCID, SensorCollection);
+    
+    // Create analysis file ONCE with thread safety
+    std::lock_guard<std::mutex> lock(analysisFileMutex);
+    if (!analysisFileCreated && !analysisFile) {
+        analysisFile = new TFile("sensor_response_fits.root", "RECREATE");
+        if (analysisFile && !analysisFile->IsZombie()) {
+            analysisFileCreated = true;
+            G4cout << "Created analysis file: sensor_response_fits.root" << G4endl;
+        } else {
+            G4cerr << "Failed to create analysis file!" << G4endl;
+            if (analysisFile) {
+                delete analysisFile;
+                analysisFile = nullptr;
+            }
+        }
     }
 }
 
 void MySensitiveDetector::SaveToCSV(G4ThreeVector posPhotons, G4int copyNo) {
-    std::ofstream outputFile("photon_positions_4.csv", std::ios::app);
-    
+    static std::ofstream outputFile("photon_hits.csv");
     if (outputFile.is_open()) {
         outputFile << posPhotons.x()/mm << "," 
                    << posPhotons.y()/mm << "," 
                    << posPhotons.z()/mm << "," 
                    << copyNo << "\n";
     } else {
-        G4cerr << "Failed to open file!" << G4endl;
+        static bool warned = false;
+        if (!warned) {
+            G4cerr << "Failed to open CSV file!" << G4endl;
+            warned = true;
+        }
     }
-    
-    outputFile.close();
 }
 
-void MySensitiveDetector::RecordSensorData(const std::string& volumeName, int ntupleIndex, 
-                                          double posX, double posY, int event, int copyNo, 
-                                          G4AnalysisManager* man) {
+G4double MySensitiveDetector::GetSensorPositionFromCopyNo(G4int copyNo, G4bool getX) {
+    // From your geometry in DC.cc:
+    // collSize = nCells * cellSize = 25 * 1.84 = 46.0 mm
+    // Sensor positions are at: ±(collSize/2 + cellLength - sipmWidth/2)
+    // From debug output: sensors are at ~28 mm
+    
+    const G4double COLL_SIZE = 46.0; // mm (25 cells * 1.84 mm)
+    const G4double CELL_LENGTH = 5.0; // You need to make this accessible
+    const G4double SIPM_WIDTH = 1.0; // mm
+    const G4double SENSOR_POS = COLL_SIZE/2 + CELL_LENGTH - SIPM_WIDTH/2; // ~28 mm
+    
+    const G4double CELL_SIZE = 1.84; // mm
+    
+    if (copyNo < 25) { // Right side (copyNo 0-24)
+        if (getX) return SENSOR_POS; // Fixed X position
+        else return (-12.0 + copyNo) * CELL_SIZE; // Varying Y position
+    }
+    else if (copyNo < 50) { // Top side (copyNo 25-49)
+        if (getX) return (-12.0 + (copyNo - 25)) * CELL_SIZE; // Varying X position
+        else return SENSOR_POS; // Fixed Y position
+    }
+    else if (copyNo < 75) { // Left side (copyNo 50-74)
+        if (getX) return -SENSOR_POS; // Fixed X position
+        else return (-12.0 + (copyNo - 50)) * CELL_SIZE; // Varying Y position
+    }
+    else { // Bottom side (copyNo 75-99)
+        if (getX) return (-12.0 + (copyNo - 75)) * CELL_SIZE; // Varying X position
+        else return -SENSOR_POS; // Fixed Y position
+    }
+}
+void MySensitiveDetector::RecordSensorData(G4String volumeName, int ntupleIndex, 
+                                          double posX, double posY, int event, int copyNo) {
+    G4AnalysisManager* man = G4AnalysisManager::Instance();
+    if (!man) return;
     
     if (ntupleIndex >= 0 && ntupleIndex < 4) {
-        // Fill ntuple columns
         man->FillNtupleDColumn(ntupleIndex, 0, posX);
         man->FillNtupleDColumn(ntupleIndex, 1, posY);
         man->FillNtupleIColumn(ntupleIndex, 2, event);
         man->FillNtupleIColumn(ntupleIndex, 3, copyNo);
         man->AddNtupleRow(ntupleIndex);
         
-        //  MAPPING based on ACTUAL geometry:
-        // sensor_Vol1 = RIGHT side (positive X) - copyNo 0-24
-        // sensor_Vol3 = TOP side (positive Y) - copyNo 25-49
-        // sensor_Vol2 = LEFT side (negative X) - copyNo 50-74
-        // sensor_Vol4 = BOTTOM side (negative Y) - copyNo 75-99
-        
-        if (volumeName == "sensor_Vol1") {  //  RIGHT side
-            man->FillH1(0, copyNo);  // Right sensors (0-24)
+        // Fill histogram with sensor index
+        if (volumeName == "sensor_Vol1") {
+            man->FillH1(0, copyNo);
         }
-        else if (volumeName == "sensor_Vol3") {  // TOP side
-            man->FillH1(1, copyNo - 25);  //  Top sensors (0-24)
+        else if (volumeName == "sensor_Vol3") {
+            man->FillH1(1, copyNo - 25);
         }
-        else if (volumeName == "sensor_Vol2") {  //  LEFT side
-            man->FillH1(2, copyNo - 50);  //  Left sensors (0-24)
+        else if (volumeName == "sensor_Vol2") {
+            man->FillH1(2, copyNo - 50);
         }
-        else if (volumeName == "sensor_Vol4") {  // BOTTOM side
-            man->FillH1(3, copyNo - 75);  // Bottom sensors (0-24)
+        else if (volumeName == "sensor_Vol4") {
+            man->FillH1(3, copyNo - 75);
         }
     }
+}
+
+std::pair<double, double> MySensitiveDetector::CalculateCenterOfGravity(
+    const std::map<G4int, std::vector<G4double>>& rightXPos,
+    const std::map<G4int, std::vector<G4double>>& rightYPos,
+    const std::map<G4int, std::vector<G4double>>& leftXPos,
+    const std::map<G4int, std::vector<G4double>>& leftYPos,
+    const std::map<G4int, std::vector<G4double>>& topXPos,
+    const std::map<G4int, std::vector<G4double>>& topYPos,
+    const std::map<G4int, std::vector<G4double>>& bottomXPos,
+    const std::map<G4int, std::vector<G4double>>& bottomYPos) {
+    
+    double x_sum = 0.0, y_sum = 0.0;
+    double total_weight = 0.0;
+    
+    // Process right sensors - use ACTUAL hit positions
+    for (const auto& [copyNo, xPosVec] : rightXPos) {
+        for (const auto& x_pos : xPosVec) {
+            x_sum += x_pos;
+            total_weight += 1.0;
+        }
+    }
+    for (const auto& [copyNo, yPosVec] : rightYPos) {
+        for (const auto& y_pos : yPosVec) {
+            y_sum += y_pos;
+        }
+    }
+    
+    // Process left sensors - use ACTUAL hit positions
+    for (const auto& [copyNo, xPosVec] : leftXPos) {
+        for (const auto& x_pos : xPosVec) {
+            x_sum += x_pos;
+            total_weight += 1.0;
+        }
+    }
+    for (const auto& [copyNo, yPosVec] : leftYPos) {
+        for (const auto& y_pos : yPosVec) {
+            y_sum += y_pos;
+        }
+    }
+    
+    // Process top sensors - use ACTUAL hit positions
+    for (const auto& [copyNo, xPosVec] : topXPos) {
+        for (const auto& x_pos : xPosVec) {
+            x_sum += x_pos;
+            total_weight += 1.0;
+        }
+    }
+    for (const auto& [copyNo, yPosVec] : topYPos) {
+        for (const auto& y_pos : yPosVec) {
+            y_sum += y_pos;
+        }
+    }
+    
+    // Process bottom sensors - use ACTUAL hit positions
+    for (const auto& [copyNo, xPosVec] : bottomXPos) {
+        for (const auto& x_pos : xPosVec) {
+            x_sum += x_pos;
+            total_weight += 1.0;
+        }
+    }
+    for (const auto& [copyNo, yPosVec] : bottomYPos) {
+        for (const auto& y_pos : yPosVec) {
+            y_sum += y_pos;
+        }
+    }
+    
+    if (total_weight > 0) {
+        return std::make_pair(x_sum / total_weight, y_sum / total_weight);
+    }
+    return std::make_pair(0.0, 0.0);
 }
 
 double MySensitiveDetector::calculateWeightedMeanX(double P_x1, double N_x1, double sigma_x1, 
@@ -114,269 +241,474 @@ double MySensitiveDetector::calculateWeightedMeanY(double P_y1, double N_y1, dou
     return numerator / denominator;
 }
 
-void MySensitiveDetector::FitHistogram(const std::vector<double>& xTop,      
-                                       const std::vector<double>& xBottom,   
-                                       const std::vector<double>& yRight,    
-                                       const std::vector<double>& yLeft,     
-                                       G4int eventID) {
-    // FIXED: Use the new parameter names
-    if (xTop.empty() || xBottom.empty() || 
-        yRight.empty() || yLeft.empty()) {
-        G4cout << "Event " << eventID << ": Not enough data for fitting" << G4endl;
-        return;
+std::pair<double, double> MySensitiveDetector::PerformSensorGaussianFit(
+    const std::map<G4int, std::vector<G4double>>& rightXPos,
+    const std::map<G4int, std::vector<G4double>>& rightYPos,
+    const std::map<G4int, std::vector<G4double>>& leftXPos,
+    const std::map<G4int, std::vector<G4double>>& leftYPos,
+    const std::map<G4int, std::vector<G4double>>& topXPos,
+    const std::map<G4int, std::vector<G4double>>& topYPos,
+    const std::map<G4int, std::vector<G4double>>& bottomXPos,
+    const std::map<G4int, std::vector<G4double>>& bottomYPos,
+    G4int eventID) {
+    
+    double reconstructedX = 0.0;
+    double reconstructedY = 0.0;
+    
+    // Variables for equation 3.1 parameters
+    double Px1 = 0.0, Nx1 = 0.0, sigmaX1 = 0.0;  // Top array
+    double Px2 = 0.0, Nx2 = 0.0, sigmaX2 = 0.0;  // Bottom array
+    double Py1 = 0.0, Ny1 = 0.0, sigmaY1 = 0.0;  // Right array  
+    double Py2 = 0.0, Ny2 = 0.0, sigmaY2 = 0.0;  // Left array
+    
+    bool canFitX = false;
+    bool canFitY = false;
+    
+    // === Fit TOP sensors (for X-coordinate reconstruction) ===
+    // Fit ACTUAL X positions of photons hitting top sensors
+    if (!topXPos.empty()) {
+        // Create histogram of ACTUAL photon X positions
+        TH1D histTop(Form("histTopX_evt%d", eventID), "Top Photon X Positions", 
+                     50, -30, 30);
+        
+        // Fill with ACTUAL photon X positions from debug output
+        for (const auto& [copyNo, xPosVec] : topXPos) {
+            for (const auto& x_pos : xPosVec) {
+                histTop.Fill(x_pos);
+                Nx1++;
+            }
+        }
+        
+        // Fit Gaussian if we have enough hits
+        if (histTop.GetEntries() >= 5) {
+            TF1 gaussFitTop(Form("gaussFitTopX_%d", eventID), "gaus", -30.0, 30.0);
+            
+            // Initial parameters from histogram
+            double meanInit = histTop.GetMean();
+            double rmsInit = histTop.GetRMS();
+            double maxVal = histTop.GetMaximum();
+            
+            // Use reasonable constraints
+            double initialSigma = std::max(1.0, std::min(rmsInit, 10.0));
+            
+            gaussFitTop.SetParameters(maxVal, meanInit, initialSigma);
+            gaussFitTop.SetParLimits(0, 0.1, maxVal * 2.0);
+            gaussFitTop.SetParLimits(1, -25.0, 25.0);
+            gaussFitTop.SetParLimits(2, 1.0, 15.0);  // Sigma 1-15 mm
+            
+            if (histTop.Fit(&gaussFitTop, "QN0") == 0) {
+                double fitMean = gaussFitTop.GetParameter(1);
+                double fitSigma = gaussFitTop.GetParameter(2);
+                
+                // Accept only realistic fits
+                if (std::abs(fitMean) < 30.0 && fitSigma >= 1.0 && fitSigma <= 25.0) {
+                    Px1 = fitMean;
+                    sigmaX1 = fitSigma;
+                    canFitX = true;
+                } else {
+                    // Use constrained histogram values
+                    Px1 = std::min(std::max(histTop.GetMean(), -25.0), 25.0);
+                    sigmaX1 = std::min(std::max(histTop.GetRMS(), 2.0), 10.0);
+                    canFitX = true;
+                }
+            } else {
+                // Fit failed, use constrained histogram values
+                Px1 = std::min(std::max(histTop.GetMean(), -25.0), 25.0);
+                sigmaX1 = std::min(std::max(histTop.GetRMS(), 2.0), 10.0);
+                canFitX = true;
+            }
+            
+            // Final sigma constraint
+            sigmaX1 = std::min(std::max(sigmaX1, 1.0), 25.0);
+        }
     }
     
-    int bins = 50;
-    
-    // Create ROOT file for histograms if needed
-    static TFile* rootFile = nullptr;
-    static bool firstCall = true;
-    if (firstCall) {
-        rootFile = new TFile("sensor_hists.root", "RECREATE");
-        firstCall = false;
+    // === Fit BOTTOM sensors (for X-coordinate reconstruction) ===
+    // Fit ACTUAL X positions of photons hitting bottom sensors
+    if (!bottomXPos.empty()) {
+        TH1D histBottom(Form("histBottomX_evt%d", eventID), "Bottom Photon X Positions", 
+                        50, -30, 30);
+        
+        for (const auto& [copyNo, xPosVec] : bottomXPos) {
+            for (const auto& x_pos : xPosVec) {
+                histBottom.Fill(x_pos);
+                Nx2++;
+            }
+        }
+        
+        if (histBottom.GetEntries() >= 5) {
+            TF1 gaussFitBottom(Form("gaussFitBottomX_%d", eventID), "gaus", -30.0, 30.0);
+            
+            double meanInit = histBottom.GetMean();
+            double rmsInit = histBottom.GetRMS();
+            double maxVal = histBottom.GetMaximum();
+            
+            double initialSigma = std::max(1.0, std::min(rmsInit, 10.0));
+            
+            gaussFitBottom.SetParameters(maxVal, meanInit, initialSigma);
+            gaussFitBottom.SetParLimits(0, 0.1, maxVal * 2.0);
+            gaussFitBottom.SetParLimits(1, -25.0, 25.0);
+            gaussFitBottom.SetParLimits(2, 1.0, 15.0);
+            
+            if (histBottom.Fit(&gaussFitBottom, "QN0") == 0) {
+                double fitMean = gaussFitBottom.GetParameter(1);
+                double fitSigma = gaussFitBottom.GetParameter(2);
+                
+                if (std::abs(fitMean) < 30.0 && fitSigma >= 1.0 && fitSigma <= 25.0) {
+                    Px2 = fitMean;
+                    sigmaX2 = fitSigma;
+                    canFitX = true;
+                } else {
+                    Px2 = std::min(std::max(histBottom.GetMean(), -25.0), 25.0);
+                    sigmaX2 = std::min(std::max(histBottom.GetRMS(), 2.0), 10.0);
+                    canFitX = true;
+                }
+            } else {
+                Px2 = std::min(std::max(histBottom.GetMean(), -25.0), 25.0);
+                sigmaX2 = std::min(std::max(histBottom.GetRMS(), 2.0), 10.0);
+                canFitX = true;
+            }
+            
+            sigmaX2 = std::min(std::max(sigmaX2, 1.0), 25.0);
+        }
     }
     
-    // Process X positions from TOP and BOTTOM sensors
-    double minXTop = *std::min_element(xTop.begin(), xTop.end());
-    double maxXTop = *std::max_element(xTop.begin(), xTop.end());
-    double minXBottom = *std::min_element(xBottom.begin(), xBottom.end());
-    double maxXBottom = *std::max_element(xBottom.begin(), xBottom.end());
+    // === Fit RIGHT sensors (for Y-coordinate reconstruction) ===
+    // Fit ACTUAL Y positions of photons hitting right sensors
+    if (!rightYPos.empty()) {
+        TH1D histRight(Form("histRightY_evt%d", eventID), "Right Photon Y Positions", 
+                       50, -30, 30);
+        
+        for (const auto& [copyNo, yPosVec] : rightYPos) {
+            for (const auto& y_pos : yPosVec) {
+                histRight.Fill(y_pos);
+                Ny1++;
+            }
+        }
+        
+        if (histRight.GetEntries() >= 5) {
+            TF1 gaussFitRight(Form("gaussFitRightY_%d", eventID), "gaus", -30.0, 30.0);
+            
+            double meanInit = histRight.GetMean();
+            double rmsInit = histRight.GetRMS();
+            double maxVal = histRight.GetMaximum();
+            
+            double initialSigma = std::max(1.0, std::min(rmsInit, 10.0));
+            
+            gaussFitRight.SetParameters(maxVal, meanInit, initialSigma);
+            gaussFitRight.SetParLimits(0, 0.1, maxVal * 2.0);
+            gaussFitRight.SetParLimits(1, -25.0, 25.0);
+            gaussFitRight.SetParLimits(2, 1.0, 15.0);
+            
+            if (histRight.Fit(&gaussFitRight, "QN0") == 0) {
+                double fitMean = gaussFitRight.GetParameter(1);
+                double fitSigma = gaussFitRight.GetParameter(2);
+                
+                if (std::abs(fitMean) < 30.0 && fitSigma >= 1.0 && fitSigma <= 25.0) {
+                    Py1 = fitMean;
+                    sigmaY1 = fitSigma;
+                    canFitY = true;
+                } else {
+                    Py1 = std::min(std::max(histRight.GetMean(), -25.0), 25.0);
+                    sigmaY1 = std::min(std::max(histRight.GetRMS(), 2.0), 10.0);
+                    canFitY = true;
+                }
+            } else {
+                Py1 = std::min(std::max(histRight.GetMean(), -25.0), 25.0);
+                sigmaY1 = std::min(std::max(histRight.GetRMS(), 2.0), 10.0);
+                canFitY = true;
+            }
+            
+            sigmaY1 = std::min(std::max(sigmaY1, 1.0), 25.0);
+        }
+    }
     
-    // Ensure reasonable histogram ranges
-    if (maxXTop - minXTop < 0.1) { maxXTop = minXTop + 1.0; minXTop = minXTop - 1.0; }
-    if (maxXBottom - minXBottom < 0.1) { maxXBottom = minXBottom + 1.0; minXBottom = minXBottom - 1.0; }
+    // === Fit LEFT sensors (for Y-coordinate reconstruction) ===
+    // Fit ACTUAL Y positions of photons hitting left sensors
+    if (!leftYPos.empty()) {
+        TH1D histLeft(Form("histLeftY_evt%d", eventID), "Left Photon Y Positions", 
+                      50, -30, 30);
+        
+        for (const auto& [copyNo, yPosVec] : leftYPos) {
+            for (const auto& y_pos : yPosVec) {
+                histLeft.Fill(y_pos);
+                Ny2++;
+            }
+        }
+        
+        if (histLeft.GetEntries() >= 5) {
+            TF1 gaussFitLeft(Form("gaussFitLeftY_%d", eventID), "gaus", -30.0, 30.0);
+            
+            double meanInit = histLeft.GetMean();
+            double rmsInit = histLeft.GetRMS();
+            double maxVal = histLeft.GetMaximum();
+            
+            double initialSigma = std::max(1.0, std::min(rmsInit, 10.0));
+            
+            gaussFitLeft.SetParameters(maxVal, meanInit, initialSigma);
+            gaussFitLeft.SetParLimits(0, 0.1, maxVal * 2.0);
+            gaussFitLeft.SetParLimits(1, -25.0, 25.0);
+            gaussFitLeft.SetParLimits(2, 1.0, 15.0);
+            
+            if (histLeft.Fit(&gaussFitLeft, "QN0") == 0) {
+                double fitMean = gaussFitLeft.GetParameter(1);
+                double fitSigma = gaussFitLeft.GetParameter(2);
+                
+                if (std::abs(fitMean) < 30.0 && fitSigma >= 1.0 && fitSigma <= 25.0) {
+                    Py2 = fitMean;
+                    sigmaY2 = fitSigma;
+                    canFitY = true;
+                } else {
+                    Py2 = std::min(std::max(histLeft.GetMean(), -25.0), 25.0);
+                    sigmaY2 = std::min(std::max(histLeft.GetRMS(), 2.0), 10.0);
+                    canFitY = true;
+                }
+            } else {
+                Py2 = std::min(std::max(histLeft.GetMean(), -25.0), 25.0);
+                sigmaY2 = std::min(std::max(histLeft.GetRMS(), 2.0), 10.0);
+                canFitY = true;
+            }
+            
+            sigmaY2 = std::min(std::max(sigmaY2, 1.0), 25.0);
+        }
+    }
     
-    TH1D* histXTop = new TH1D(Form("histXTop_evt%d", eventID), "X Top Distribution (sensor_Vol3)", bins, minXTop, maxXTop);
-    TH1D* histXBottom = new TH1D(Form("histXBottom_evt%d", eventID), "X Bottom Distribution (sensor_Vol4)", bins, minXBottom, maxXBottom);
+    // === APPLY THE LITERATURE FORMULA (Equation 3.1) ===
     
-    for (double x : xTop) histXTop->Fill(x);
-    for (double x : xBottom) histXBottom->Fill(x);
+    // For X-coordinate: Weighted mean of Top and Bottom arrays
+    if (canFitX && Nx1 > 0 && Nx2 > 0 && sigmaX1 > 0 && sigmaX2 > 0) {
+        // Equation 3.1 for X:
+        double numeratorX = (Px1 * Nx1 / sigmaX1) + (Px2 * Nx2 / sigmaX2);
+        double denominatorX = (Nx1 / sigmaX1) + (Nx2 / sigmaX2);
+        
+        if (denominatorX != 0) {
+            reconstructedX = numeratorX / denominatorX;
+        }
+    }
     
-    TF1* gaussFitXTop = new TF1("gaussFitXTop", "gaus", minXTop, maxXTop);
-    gaussFitXTop->SetLineColor(kRed);
-    histXTop->Fit(gaussFitXTop, "QR0");  // "0" for no graphics
+    // For Y-coordinate: Weighted mean of Right and Left arrays
+    if (canFitY && Ny1 > 0 && Ny2 > 0 && sigmaY1 > 0 && sigmaY2 > 0) {
+        // Equation 3.1 for Y:
+        double numeratorY = (Py1 * Ny1 / sigmaY1) + (Py2 * Ny2 / sigmaY2);
+        double denominatorY = (Ny1 / sigmaY1) + (Ny2 / sigmaY2);
+        
+        if (denominatorY != 0) {
+            reconstructedY = numeratorY / denominatorY;
+        }
+    }
     
-    TF1* gaussFitXBottom = new TF1("gaussFitXBottom", "gaus", minXBottom, maxXBottom);
-    gaussFitXBottom->SetLineColor(kRed);
-    histXBottom->Fit(gaussFitXBottom, "QR0");
+    // Check if reconstructed positions are physically reasonable
+    if (std::abs(reconstructedX) > 25.0 || std::abs(reconstructedY) > 25.0) {
+        reconstructedX = 0.0;
+        reconstructedY = 0.0;
+    }
     
-    double meanXTop = gaussFitXTop->GetParameter(1);
-    double sigmaXTop = gaussFitXTop->GetParameter(2);
-    double amplitudeXTop = gaussFitXTop->GetParameter(0);
+    // Add detailed debug output for successful reconstructions
+    if (canFitX && canFitY && reconstructedX != 0.0 && reconstructedY != 0.0) {
+        if (eventID % 10 == 0) {  // Show every 10th event with successful reconstruction
+            G4cout << "Event " << eventID << " Gaussian reconstruction:" << G4endl;
+            G4cout << "  Top X: P=" << Px1 << " mm, N=" << Nx1 << ", σ=" << sigmaX1 << " mm" << G4endl;
+            G4cout << "  Bottom X: P=" << Px2 << " mm, N=" << Nx2 << ", σ=" << sigmaX2 << " mm" << G4endl;
+            G4cout << "  Right Y: P=" << Py1 << " mm, N=" << Ny1 << ", σ=" << sigmaY1 << " mm" << G4endl;
+            G4cout << "  Left Y: P=" << Py2 << " mm, N=" << Ny2 << ", σ=" << sigmaY2 << " mm" << G4endl;
+            G4cout << "  Reconstructed: (" << reconstructedX << ", " << reconstructedY << ") mm" << G4endl;
+        }
+    }
     
-    double meanXBottom = gaussFitXBottom->GetParameter(1);
-    double sigmaXBottom = gaussFitXBottom->GetParameter(2);
-    double amplitudeXBottom = gaussFitXBottom->GetParameter(0);
     
-    // Process Y positions from RIGHT and LEFT sensors
-    double minYRight = *std::min_element(yRight.begin(), yRight.end());
-    double maxYRight = *std::max_element(yRight.begin(), yRight.end());
-    double minYLeft = *std::min_element(yLeft.begin(), yLeft.end());
-    double maxYLeft = *std::max_element(yLeft.begin(), yLeft.end());
-    
-    // Ensure reasonable histogram ranges
-    if (maxYRight - minYRight < 0.1) { maxYRight = minYRight + 1.0; minYRight = minYRight - 1.0; }
-    if (maxYLeft - minYLeft < 0.1) { maxYLeft = minYLeft + 1.0; minYLeft = minYLeft - 1.0; }
-    
-    TH1D* histYRight = new TH1D(Form("histYRight_evt%d", eventID), "Y Right Distribution (sensor_Vol1)", bins, minYRight, maxYRight);
-    TH1D* histYLeft = new TH1D(Form("histYLeft_evt%d", eventID), "Y Left Distribution (sensor_Vol2)", bins, minYLeft, maxYLeft);
-    
-    for (double y : yRight) histYRight->Fill(y);
-    for (double y : yLeft) histYLeft->Fill(y);
-    
-    TF1* gaussFitYRight = new TF1("gaussFitYRight", "gaus", minYRight, maxYRight);
-    gaussFitYRight->SetLineColor(kBlue);
-    histYRight->Fit(gaussFitYRight, "QR0");
-    
-    TF1* gaussFitYLeft = new TF1("gaussFitYLeft", "gaus", minYLeft, maxYLeft);
-    gaussFitYLeft->SetLineColor(kBlue);
-    histYLeft->Fit(gaussFitYLeft, "QR0");
-    
-    double meanYRight = gaussFitYRight->GetParameter(1);
-    double sigmaYRight = gaussFitYRight->GetParameter(2);
-    double amplitudeYRight = gaussFitYRight->GetParameter(0);
-    
-    double meanYLeft = gaussFitYLeft->GetParameter(1);
-    double sigmaYLeft = gaussFitYLeft->GetParameter(2);
-    double amplitudeYLeft = gaussFitYLeft->GetParameter(0);
-    
-    // Compute weighted means - FIXED parameter names
-    double x_pos = calculateWeightedMeanX(meanXTop, amplitudeXTop, sigmaXTop, meanXBottom, amplitudeXBottom, sigmaXBottom);
-    double y_pos = calculateWeightedMeanY(meanYRight, amplitudeYRight, sigmaYRight, meanYLeft, amplitudeYLeft, sigmaYLeft);
-    
-    // Store the results in ntuple
-    G4AnalysisManager* man = G4AnalysisManager::Instance();
-    
-    // Fill 2D histogram with reconstructed position
-    man->FillH2(0, x_pos, y_pos);
-    
-    // Store X and Y positions in separate ntuples
-    man->FillNtupleDColumn(4, 0, x_pos);
-    man->AddNtupleRow(4);
-    
-    man->FillNtupleDColumn(5, 0, y_pos);
-    man->AddNtupleRow(5);
-    
-    // Write histograms to file
-    rootFile->cd();
-    histXTop->Write();
-    histXBottom->Write();
-    histYRight->Write();
-    histYLeft->Write();
-    
-    // Cleanup
-    delete histXTop; delete histXBottom;
-    delete gaussFitXTop; delete gaussFitXBottom;
-    delete histYRight; delete histYLeft;
-    delete gaussFitYRight; delete gaussFitYLeft;
+    return std::make_pair(reconstructedX, reconstructedY);
 }
-
 G4bool MySensitiveDetector::ProcessHits(G4Step *aStep, G4TouchableHistory*) {
     G4Track *track = aStep->GetTrack();
-    G4ParticleDefinition* particle = track->GetDefinition();
+    if (!track) return false;
     
-    // Only process optical photons
+    G4ParticleDefinition* particle = track->GetDefinition();
+    if (!particle) return false;
+    
     if (particle->GetParticleName() != "opticalphoton") {
         return false;
     }
     
-    // Kill the photon after detection (optional)
-    // track->SetTrackStatus(fStopAndKill);
-    
     G4StepPoint *postStepPoint = aStep->GetPostStepPoint();
+    if (!postStepPoint) return false;
+    
     const G4VTouchable *touchable = aStep->GetPreStepPoint()->GetTouchable();
+    if (!touchable) return false;
     
     G4ThreeVector posPhotons = postStepPoint->GetPosition();
     G4int copyNo = touchable->GetCopyNumber();
-    G4VPhysicalVolume *physVol = touchable->GetVolume();
-    G4ThreeVector posDetector = physVol->GetTranslation();
     G4int evt = G4RunManager::GetRunManager()->GetCurrentEvent()->GetEventID();
     G4String volumeName = touchable->GetVolume()->GetName();
-    // DEBUG: Print position and copy number
-    G4cout << "Photon hit: volume=" << volumeName 
-           << ", copyNo=" << copyNo
-           << ", position=(" << posPhotons.x()/mm << ", " 
-           << posPhotons.y()/mm << ", " << posPhotons.z()/mm << ") mm" 
-           << G4endl;
-
-    // Create a new hit
+    
+    // ADD DEBUG: Always print first few hits
+    static int hitCount = 0;
+    if (hitCount < 10) {
+        hitCount++;
+        G4cout << "DEBUG Hit " << hitCount << ": Event " << evt 
+               << " Photon in " << volumeName 
+               << ", copyNo=" << copyNo
+               << ", ACTUAL pos=(" << posPhotons.x()/mm << ", " 
+               << posPhotons.y()/mm << ", " << posPhotons.z()/mm << ") mm"
+               << G4endl;
+    }
+    
+    // Create hit
+    if (!SensorCollection) {
+        G4cerr << "ERROR: SensorCollection not initialized!" << G4endl;
+        return false;
+    }
+    
     SensorHit* aSensorHit = new SensorHit();
     aSensorHit->SetSensorPosition(posPhotons);
     aSensorHit->SetSensorEnergy(track->GetKineticEnergy());
     aSensorHit->SetVolumeName(volumeName);
     aSensorHit->SetSensorNumber(copyNo);  
     
-    // Add hit to collection
-    if (SensorCollection) {
-        SensorCollection->insert(aSensorHit);
-    } else {
-        G4cerr << "SensorCollection not initialized!" << G4endl;
-        delete aSensorHit;
-        return false;
+    SensorCollection->insert(aSensorHit);
+    
+    // Record data - using ACTUAL photon hit positions (not calculated sensor positions)
+    double actualX = posPhotons.x()/mm;
+    double actualY = posPhotons.y()/mm;
+    
+    G4AnalysisManager* man = G4AnalysisManager::Instance();
+    if (!man) {
+        G4cerr << "ERROR: AnalysisManager not available!" << G4endl;
+        return true;
     }
     
-    // Record data in ntuples based on which sensor was hit
-    G4AnalysisManager *man = G4AnalysisManager::Instance();
-    
+    // Determine correct ntuple index and record ACTUAL positions
     if (volumeName == "sensor_Vol1") {
-    // Right side sensors - measure Y position
-    // Store: X = sensor center X (+23 mm), Y = photon Y position
-    RecordSensorData(volumeName, 0, posDetector[0]/mm, posPhotons.y()/mm, evt, copyNo, man);
-    SaveToCSV(posPhotons, copyNo);
+        man->FillH1(0, copyNo);  // Right sensors
+        RecordSensorData(volumeName, 0, actualX, actualY, evt, copyNo);
     } 
     else if (volumeName == "sensor_Vol2") {
-            // Left side sensors - measure Y position  
-           // Store: X = sensor center X (-23 mm), Y = photon Y position
-            RecordSensorData(volumeName, 1, posDetector[0]/mm, posPhotons.y()/mm, evt, copyNo, man);
-            SaveToCSV(posPhotons, copyNo);
+        man->FillH1(2, copyNo - 50);  // Left sensors
+        RecordSensorData(volumeName, 1, actualX, actualY, evt, copyNo);
     } 
     else if (volumeName == "sensor_Vol3") {
-    // Top side sensors - measure X position
-    // Store: X = photon X position, Y = sensor center Y (23 mm)
-            RecordSensorData(volumeName, 2, posPhotons.x()/mm, posDetector[1]/mm, evt, copyNo, man);
-            SaveToCSV(posPhotons, copyNo);
+        man->FillH1(1, copyNo - 25);  // Top sensors
+        RecordSensorData(volumeName, 2, actualX, actualY, evt, copyNo);
     } 
     else if (volumeName == "sensor_Vol4") {
-    // Bottom side sensors - measure X position
-    // Store: X = photon X position, Y = sensor center Y (-23 mm)
-            RecordSensorData(volumeName, 3, posPhotons.x()/mm, posDetector[1]/mm, evt, copyNo, man);
-            SaveToCSV(posPhotons, copyNo);
+        man->FillH1(3, copyNo - 75);  // Bottom sensors
+        RecordSensorData(volumeName, 3, actualX, actualY, evt, copyNo);
     }
     else {
-        G4cout << "Warning: Photon detected in unknown volume: " << volumeName << G4endl;
+        G4cout << "WARNING: Unknown volume: " << volumeName << G4endl;
     }
+    
+    // Optional: Save to CSV
+    SaveToCSV(posPhotons, copyNo);
     
     return true;
 }
 
 void MySensitiveDetector::EndOfEvent(G4HCofThisEvent* HCE) {
-    if (!SensorCollection) return;
+    if (!SensorCollection) {
+        G4cerr << "WARNING: SensorCollection is null in EndOfEvent!" << G4endl;
+        return;
+    }
     
     G4int nHits = SensorCollection->entries();
     G4int evtID = G4RunManager::GetRunManager()->GetCurrentEvent()->GetEventID();
     
-    //G4cout << "Event " << evtID << ": Number of photon hits = " << nHits << G4endl;
+    // DEBUG: Print event info
+    if (evtID < 10 || nHits > 0) {
+        G4cout << "Event " << evtID << ": " << nHits << " photon hits" << G4endl;
+    }
     
     if (nHits > 0) {
-        // CORRECTED: Update variable names to match actual geometry
-        // yPositions1 = RIGHT sensors (sensor_Vol1) - measure Y at fixed X = +23 mm
-        // yPositions2 = LEFT sensors (sensor_Vol2) - measure Y at fixed X = -23 mm  
-        // xPositions1 = TOP sensors (sensor_Vol3) - measure X at fixed Y = +23 mm
-        // xPositions2 = BOTTOM sensors (sensor_Vol4) - measure X at fixed Y = -23 mm
+        // Collect ACTUAL hit positions
+        std::map<G4int, std::vector<G4double>> rightX, rightY;
+        std::map<G4int, std::vector<G4double>> leftX, leftY;
+        std::map<G4int, std::vector<G4double>> topX, topY;
+        std::map<G4int, std::vector<G4double>> bottomX, bottomY;
         
-        std::vector<double> yPositionsRight, yPositionsLeft; // For RIGHT and LEFT sensors
-        std::vector<double> xPositionsTop, xPositionsBottom; // For TOP and BOTTOM sensors
-        
-        // Process hits
+        // Process all hits to collect actual positions
         for (G4int i = 0; i < nHits; i++) {
             SensorHit* hit = (*SensorCollection)[i];
             if (!hit) continue;
             
-            G4ThreeVector position = hit->GetSensorPosition();
+            G4int copyNo = hit->GetSensorNumber();
             G4String volumeName = hit->GetVolumeName();
+            G4ThreeVector pos = hit->GetSensorPosition();
+            G4double x = pos.x()/mm;
+            G4double y = pos.y()/mm;
             
-            // Separate data based on sensor type
-            if (volumeName == "sensor_Vol1") {
-                // RIGHT side - Y position at fixed X = +23 mm
-                yPositionsRight.push_back(position.y());
-            } 
-            else if (volumeName == "sensor_Vol2") {
-                // LEFT side - Y position at fixed X = -23 mm
-                yPositionsLeft.push_back(position.y());
-            } 
-            else if (volumeName == "sensor_Vol3") {
-                // TOP side - X position at fixed Y = +23 mm
-                xPositionsTop.push_back(position.x());
-            } 
-            else if (volumeName == "sensor_Vol4") {
-                // BOTTOM side - X position at fixed Y = -23 mm
-                xPositionsBottom.push_back(position.x());
+            if (volumeName == "sensor_Vol1") { // Right
+                rightX[copyNo].push_back(x);
+                rightY[copyNo].push_back(y);
+            }
+            else if (volumeName == "sensor_Vol2") { // Left
+                leftX[copyNo].push_back(x);
+                leftY[copyNo].push_back(y);
+            }
+            else if (volumeName == "sensor_Vol3") { // Top
+                topX[copyNo].push_back(x);
+                topY[copyNo].push_back(y);
+            }
+            else if (volumeName == "sensor_Vol4") { // Bottom
+                bottomX[copyNo].push_back(x);
+                bottomY[copyNo].push_back(y);
             }
         }
         
-        // CORRECTED debug output
-        G4cout << "Event " << evtID << " sensor hits distribution: " 
-               << "Right(sensor_Vol1)=" << yPositionsRight.size() 
-               << ", Left(sensor_Vol2)=" << yPositionsLeft.size()
-               << ", Top(sensor_Vol3)=" << xPositionsTop.size()
-               << ", Bottom(sensor_Vol4)=" << xPositionsBottom.size() << G4endl;
+        // Debug output
+        if (evtID % 100 == 0) {
+            G4cout << "Event " << evtID << " hits per sensor type: "
+                   << "Right=" << rightX.size() << " sensors, "
+                   << "Left=" << leftX.size() << " sensors, "
+                   << "Top=" << topX.size() << " sensors, "
+                   << "Bottom=" << bottomX.size() << " sensors"
+                   << G4endl;
+        }
         
-        // Perform Gaussian fits if we have enough data
-        G4int minHitsForFit = 1;  // Minimum hits per sensor for fitting
-        if (yPositionsRight.size() >= minHitsForFit && 
-            yPositionsLeft.size() >= minHitsForFit &&
-            xPositionsTop.size() >= minHitsForFit && 
-            xPositionsBottom.size() >= minHitsForFit) {
+        G4AnalysisManager* man = G4AnalysisManager::Instance();
+        if (!man) return;
+        
+        // Method 1: Gaussian fit on ACTUAL hit positions
+        bool canFitX = (!topX.empty() && !bottomX.empty());
+        bool canFitY = (!rightY.empty() && !leftY.empty());
+        
+        if (canFitX && canFitY) {
+            auto [xGauss, yGauss] = PerformSensorGaussianFit(
+                rightX, rightY, leftX, leftY, 
+                topX, topY, bottomX, bottomY, evtID);
             
-            //G4cout << "Performing position reconstruction for event " << evtID << G4endl;
-            FitHistogram(xPositionsTop, xPositionsBottom, yPositionsRight, yPositionsLeft, evtID);
-            
-        } else {
-            //G4cout << "Event " << evtID << ": Not enough hits for fitting (need at least " 
-            //       << minHitsForFit << " per sensor)" << G4endl;
+            // Only store if fit produced reasonable values
+            if (std::abs(xGauss) < 30.0 && std::abs(yGauss) < 30.0) {
+                // Store Gaussian fit results
+                man->FillH2(0, xGauss, yGauss);  // Gaussian fit positions
+                man->FillNtupleDColumn(4, 0, xGauss);
+                man->FillNtupleDColumn(4, 1, yGauss);
+                man->AddNtupleRow(4);
+                
+                if (evtID % 100 == 0) {
+                    G4cout << "Event " << evtID << " Gaussian fit: ("
+                           << xGauss << ", " << yGauss << ") mm" << G4endl;
+                }
+            } else if (evtID % 100 == 0) {
+                G4cout << "Event " << evtID << " Gaussian fit rejected: ("
+                       << xGauss << ", " << yGauss << ") mm (outside detector)" << G4endl;
+            }
+        }
+        
+        // Method 2: Center of gravity using ACTUAL hit positions
+        auto [xCOG, yCOG] = CalculateCenterOfGravity(
+            rightX, rightY, leftX, leftY,
+            topX, topY, bottomX, bottomY);
+        
+        // Store COG results
+        man->FillH2(1, xCOG, yCOG);  // Center of gravity positions
+        man->FillNtupleDColumn(5, 0, xCOG);
+        man->FillNtupleDColumn(5, 1, yCOG);
+        man->AddNtupleRow(5);
+        
+        if (evtID % 100 == 0) {
+            G4cout << "Event " << evtID << " Center of gravity: ("
+                   << xCOG << ", " << yCOG << ") mm" << G4endl;
         }
     }
     
-    // Optional: Clear hits for next event (Geant4 usually handles this)
-    // SensorCollection->clear();
+    // DO NOT clear SensorCollection - Geant4 manages it
 }
