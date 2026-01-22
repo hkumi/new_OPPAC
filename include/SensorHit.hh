@@ -19,7 +19,7 @@ class SensorHit : public G4VHit {
     const SensorHit& operator=(const SensorHit&);
     int operator==(const SensorHit&) const;
 
-    // Declare operator new and delete (defined inline in the header file)
+    // Declare operator new and delete 
     static void* operator new(size_t);
     static void operator delete(void*);
 
@@ -51,12 +51,12 @@ typedef G4THitsCollection<SensorHit> SensorHitsCollection;
 // Allocator declaration
 extern G4Allocator<SensorHit> SensorHitsAllocator;
 
-// Define operator new inline (already done in the header)
+// Define operator new inline 
 inline void* SensorHit::operator new(size_t) {
   return (void*)SensorHitsAllocator.MallocSingle();
 }
 
-// Define operator delete inline (already done in the header)
+// Define operator delete inline 
 inline void SensorHit::operator delete(void* aSensorHit) {
   SensorHitsAllocator.FreeSingle((SensorHit*)aSensorHit);
 }

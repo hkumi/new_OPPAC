@@ -30,7 +30,7 @@ class DC : public G4VUserDetectorConstruction
     G4double fDensity;
     G4double fCollimatorLength;
     
-    // Materials (only what we actually use)
+    // Materials 
     G4Material* fTeflon;           // Collimator material
     
     // Optical surfaces

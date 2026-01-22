@@ -19,7 +19,7 @@ public:
     virtual void EndOfEvent(G4HCofThisEvent* HCE) override;
     
     void SaveToCSV(G4ThreeVector posPhotons, G4int copyNo);
-    G4double GetSensorPositionFromCopyNo(G4int copyNo, G4bool getX);
+    
     void RecordSensorData(G4String volumeName, int ntupleIndex, 
                          double posX, double posY, int event, int copyNo);
     
@@ -45,7 +45,7 @@ public:
         const std::map<G4int, std::vector<G4double>>& bottomYPos,
         G4int eventID);
     
-    // Weighted mean calculation methods from second code
+    // Weighted mean calculation methods
     double calculateWeightedMeanX(double P_x1, double N_x1, double sigma_x1, 
                                   double P_x2, double N_x2, double sigma_x2);
     
@@ -61,7 +61,7 @@ private:
     static bool analysisFileCreated;
     static std::mutex analysisFileMutex;  // Add mutex for thread safety
     
-    // Constants (should match your geometry)
+    // Constants 
     static constexpr G4double SENSOR_X_POS = 28.5;  // mm
     static constexpr G4double SENSOR_Y_POS = 28.5;  // mm
     static constexpr G4double CELL_SIZE = 1.84;     // mm
