@@ -50,12 +50,12 @@ man->FinishNtuple(1);
   man->CreateNtuple("xy_reconstruction", "Position Reconstruction");
 man->CreateNtupleDColumn("x");  // Column 0
 man->CreateNtupleDColumn("y");  // Column 1
-man->FinishNtuple(4);  // This becomes ntuple 4
+man->FinishNtuple(4);  
 
 man->CreateNtuple("cog_reconstruction", "Center of Gravity");
 man->CreateNtupleDColumn("x_cog");  // Column 0
 man->CreateNtupleDColumn("y_cog");  // Column 1  
-man->FinishNtuple(5);  // This becomes ntuple 5
+man->FinishNtuple(5);  
   
  
   man->CreateH2("xy2 ","xy2", 100, -30, 30, 100, -30, 30);

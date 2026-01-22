@@ -16,7 +16,7 @@
 #include "G4UnitsTable.hh"
 #include "G4AnalysisManager.hh"
 
-// Initialize static members (ONLY HERE, not in header)
+// Initialize static members 
 TFile* MySensitiveDetector::analysisFile = nullptr;
 bool MySensitiveDetector::analysisFileCreated = false;
 std::mutex MySensitiveDetector::analysisFileMutex;
@@ -86,36 +86,7 @@ void MySensitiveDetector::SaveToCSV(G4ThreeVector posPhotons, G4int copyNo) {
     }
 }
 
-G4double MySensitiveDetector::GetSensorPositionFromCopyNo(G4int copyNo, G4bool getX) {
-    // From your geometry in DC.cc:
-    // collSize = nCells * cellSize = 25 * 1.84 = 46.0 mm
-    // Sensor positions are at: ±(collSize/2 + cellLength - sipmWidth/2)
-    // From debug output: sensors are at ~28 mm
-    
-    const G4double COLL_SIZE = 46.0; // mm (25 cells * 1.84 mm)
-    const G4double CELL_LENGTH = 5.0; // You need to make this accessible
-    const G4double SIPM_WIDTH = 1.0; // mm
-    const G4double SENSOR_POS = COLL_SIZE/2 + CELL_LENGTH - SIPM_WIDTH/2; // ~28 mm
-    
-    const G4double CELL_SIZE = 1.84; // mm
-    
-    if (copyNo < 25) { // Right side (copyNo 0-24)
-        if (getX) return SENSOR_POS; // Fixed X position
-        else return (-12.0 + copyNo) * CELL_SIZE; // Varying Y position
-    }
-    else if (copyNo < 50) { // Top side (copyNo 25-49)
-        if (getX) return (-12.0 + (copyNo - 25)) * CELL_SIZE; // Varying X position
-        else return SENSOR_POS; // Fixed Y position
-    }
-    else if (copyNo < 75) { // Left side (copyNo 50-74)
-        if (getX) return -SENSOR_POS; // Fixed X position
-        else return (-12.0 + (copyNo - 50)) * CELL_SIZE; // Varying Y position
-    }
-    else { // Bottom side (copyNo 75-99)
-        if (getX) return (-12.0 + (copyNo - 75)) * CELL_SIZE; // Varying X position
-        else return -SENSOR_POS; // Fixed Y position
-    }
-}
+
 void MySensitiveDetector::RecordSensorData(G4String volumeName, int ntupleIndex, 
                                           double posX, double posY, int event, int copyNo) {
     G4AnalysisManager* man = G4AnalysisManager::Instance();
@@ -157,7 +128,7 @@ std::pair<double, double> MySensitiveDetector::CalculateCenterOfGravity(
     double x_sum = 0.0, y_sum = 0.0;
     double total_weight = 0.0;
     
-    // Process right sensors - use ACTUAL hit positions
+    // Process right sensors - using ACTUAL hit positions
     for (const auto& [copyNo, xPosVec] : rightXPos) {
         for (const auto& x_pos : xPosVec) {
             x_sum += x_pos;
@@ -170,7 +141,7 @@ std::pair<double, double> MySensitiveDetector::CalculateCenterOfGravity(
         }
     }
     
-    // Process left sensors - use ACTUAL hit positions
+    // Process left sensors - using ACTUAL hit positions
     for (const auto& [copyNo, xPosVec] : leftXPos) {
         for (const auto& x_pos : xPosVec) {
             x_sum += x_pos;
@@ -183,7 +154,7 @@ std::pair<double, double> MySensitiveDetector::CalculateCenterOfGravity(
         }
     }
     
-    // Process top sensors - use ACTUAL hit positions
+    // Process top sensors - using ACTUAL hit positions
     for (const auto& [copyNo, xPosVec] : topXPos) {
         for (const auto& x_pos : xPosVec) {
             x_sum += x_pos;
@@ -196,7 +167,7 @@ std::pair<double, double> MySensitiveDetector::CalculateCenterOfGravity(
         }
     }
     
-    // Process bottom sensors - use ACTUAL hit positions
+    // Process bottom sensors - using ACTUAL hit positions
     for (const auto& [copyNo, xPosVec] : bottomXPos) {
         for (const auto& x_pos : xPosVec) {
             x_sum += x_pos;
@@ -269,7 +240,7 @@ std::pair<double, double> MySensitiveDetector::PerformSensorGaussianFit(
     if (!topXPos.empty()) {
         // Create histogram of ACTUAL photon X positions
         TH1D histTop(Form("histTopX_evt%d", eventID), "Top Photon X Positions", 
-                     50, -30, 30);
+                     50, -50, 50);
         
         // Fill with ACTUAL photon X positions from debug output
         for (const auto& [copyNo, xPosVec] : topXPos) {
@@ -281,7 +252,7 @@ std::pair<double, double> MySensitiveDetector::PerformSensorGaussianFit(
         
         // Fit Gaussian if we have enough hits
         if (histTop.GetEntries() >= 5) {
-            TF1 gaussFitTop(Form("gaussFitTopX_%d", eventID), "gaus", -30.0, 30.0);
+            TF1 gaussFitTop(Form("gaussFitTopX_%d", eventID), "gaus", -50.0, 50.0);
             
             // Initial parameters from histogram
             double meanInit = histTop.GetMean();
@@ -293,7 +264,7 @@ std::pair<double, double> MySensitiveDetector::PerformSensorGaussianFit(
             
             gaussFitTop.SetParameters(maxVal, meanInit, initialSigma);
             gaussFitTop.SetParLimits(0, 0.1, maxVal * 2.0);
-            gaussFitTop.SetParLimits(1, -25.0, 25.0);
+            gaussFitTop.SetParLimits(1, -50.0, 50.0);
             gaussFitTop.SetParLimits(2, 1.0, 15.0);  // Sigma 1-15 mm
             
             if (histTop.Fit(&gaussFitTop, "QN0") == 0) {
@@ -301,19 +272,19 @@ std::pair<double, double> MySensitiveDetector::PerformSensorGaussianFit(
                 double fitSigma = gaussFitTop.GetParameter(2);
                 
                 // Accept only realistic fits
-                if (std::abs(fitMean) < 30.0 && fitSigma >= 1.0 && fitSigma <= 25.0) {
+                if (std::abs(fitMean) < 55.0 && fitSigma >= 0.5 && fitSigma <= 30.0) {
                     Px1 = fitMean;
                     sigmaX1 = fitSigma;
                     canFitX = true;
                 } else {
                     // Use constrained histogram values
-                    Px1 = std::min(std::max(histTop.GetMean(), -25.0), 25.0);
+                    Px1 = std::min(std::max(histTop.GetMean(), -50.0), 50.0);
                     sigmaX1 = std::min(std::max(histTop.GetRMS(), 2.0), 10.0);
                     canFitX = true;
                 }
             } else {
                 // Fit failed, use constrained histogram values
-                Px1 = std::min(std::max(histTop.GetMean(), -25.0), 25.0);
+                Px1 = std::min(std::max(histTop.GetMean(), -50.0), 50.0);
                 sigmaX1 = std::min(std::max(histTop.GetRMS(), 2.0), 10.0);
                 canFitX = true;
             }
@@ -327,7 +298,7 @@ std::pair<double, double> MySensitiveDetector::PerformSensorGaussianFit(
     // Fit ACTUAL X positions of photons hitting bottom sensors
     if (!bottomXPos.empty()) {
         TH1D histBottom(Form("histBottomX_evt%d", eventID), "Bottom Photon X Positions", 
-                        50, -30, 30);
+                        50, -50, 50);
         
         for (const auto& [copyNo, xPosVec] : bottomXPos) {
             for (const auto& x_pos : xPosVec) {
@@ -337,7 +308,7 @@ std::pair<double, double> MySensitiveDetector::PerformSensorGaussianFit(
         }
         
         if (histBottom.GetEntries() >= 5) {
-            TF1 gaussFitBottom(Form("gaussFitBottomX_%d", eventID), "gaus", -30.0, 30.0);
+            TF1 gaussFitBottom(Form("gaussFitBottomX_%d", eventID), "gaus", -50.0, 50.0);
             
             double meanInit = histBottom.GetMean();
             double rmsInit = histBottom.GetRMS();
@@ -347,24 +318,24 @@ std::pair<double, double> MySensitiveDetector::PerformSensorGaussianFit(
             
             gaussFitBottom.SetParameters(maxVal, meanInit, initialSigma);
             gaussFitBottom.SetParLimits(0, 0.1, maxVal * 2.0);
-            gaussFitBottom.SetParLimits(1, -25.0, 25.0);
+            gaussFitBottom.SetParLimits(1, -50.0, 50.0);
             gaussFitBottom.SetParLimits(2, 1.0, 15.0);
             
             if (histBottom.Fit(&gaussFitBottom, "QN0") == 0) {
                 double fitMean = gaussFitBottom.GetParameter(1);
                 double fitSigma = gaussFitBottom.GetParameter(2);
                 
-                if (std::abs(fitMean) < 30.0 && fitSigma >= 1.0 && fitSigma <= 25.0) {
+                if (std::abs(fitMean) < 55.0 && fitSigma >= 0.5 && fitSigma <= 30.0) {
                     Px2 = fitMean;
                     sigmaX2 = fitSigma;
                     canFitX = true;
                 } else {
-                    Px2 = std::min(std::max(histBottom.GetMean(), -25.0), 25.0);
+                    Px2 = std::min(std::max(histBottom.GetMean(), -50.0), 50.0);
                     sigmaX2 = std::min(std::max(histBottom.GetRMS(), 2.0), 10.0);
                     canFitX = true;
                 }
             } else {
-                Px2 = std::min(std::max(histBottom.GetMean(), -25.0), 25.0);
+                Px2 = std::min(std::max(histBottom.GetMean(), -50.0), 50.0);
                 sigmaX2 = std::min(std::max(histBottom.GetRMS(), 2.0), 10.0);
                 canFitX = true;
             }
@@ -377,7 +348,7 @@ std::pair<double, double> MySensitiveDetector::PerformSensorGaussianFit(
     // Fit ACTUAL Y positions of photons hitting right sensors
     if (!rightYPos.empty()) {
         TH1D histRight(Form("histRightY_evt%d", eventID), "Right Photon Y Positions", 
-                       50, -30, 30);
+                       50, -50, 50);
         
         for (const auto& [copyNo, yPosVec] : rightYPos) {
             for (const auto& y_pos : yPosVec) {
@@ -387,7 +358,7 @@ std::pair<double, double> MySensitiveDetector::PerformSensorGaussianFit(
         }
         
         if (histRight.GetEntries() >= 5) {
-            TF1 gaussFitRight(Form("gaussFitRightY_%d", eventID), "gaus", -30.0, 30.0);
+            TF1 gaussFitRight(Form("gaussFitRightY_%d", eventID), "gaus", -50.0, 50.0);
             
             double meanInit = histRight.GetMean();
             double rmsInit = histRight.GetRMS();
@@ -397,24 +368,24 @@ std::pair<double, double> MySensitiveDetector::PerformSensorGaussianFit(
             
             gaussFitRight.SetParameters(maxVal, meanInit, initialSigma);
             gaussFitRight.SetParLimits(0, 0.1, maxVal * 2.0);
-            gaussFitRight.SetParLimits(1, -25.0, 25.0);
+            gaussFitRight.SetParLimits(1, -50.0, 50.0);
             gaussFitRight.SetParLimits(2, 1.0, 15.0);
             
             if (histRight.Fit(&gaussFitRight, "QN0") == 0) {
                 double fitMean = gaussFitRight.GetParameter(1);
                 double fitSigma = gaussFitRight.GetParameter(2);
                 
-                if (std::abs(fitMean) < 30.0 && fitSigma >= 1.0 && fitSigma <= 25.0) {
+                if (std::abs(fitMean) < 55.0 && fitSigma >= 0.5 && fitSigma <= 30.0) {
                     Py1 = fitMean;
                     sigmaY1 = fitSigma;
                     canFitY = true;
                 } else {
-                    Py1 = std::min(std::max(histRight.GetMean(), -25.0), 25.0);
+                    Py1 = std::min(std::max(histRight.GetMean(), -50.0), 50.0);
                     sigmaY1 = std::min(std::max(histRight.GetRMS(), 2.0), 10.0);
                     canFitY = true;
                 }
             } else {
-                Py1 = std::min(std::max(histRight.GetMean(), -25.0), 25.0);
+                Py1 = std::min(std::max(histRight.GetMean(), -50.0), 50.0);
                 sigmaY1 = std::min(std::max(histRight.GetRMS(), 2.0), 10.0);
                 canFitY = true;
             }
@@ -427,7 +398,7 @@ std::pair<double, double> MySensitiveDetector::PerformSensorGaussianFit(
     // Fit ACTUAL Y positions of photons hitting left sensors
     if (!leftYPos.empty()) {
         TH1D histLeft(Form("histLeftY_evt%d", eventID), "Left Photon Y Positions", 
-                      50, -30, 30);
+                      50, -50, 50);
         
         for (const auto& [copyNo, yPosVec] : leftYPos) {
             for (const auto& y_pos : yPosVec) {
@@ -437,7 +408,7 @@ std::pair<double, double> MySensitiveDetector::PerformSensorGaussianFit(
         }
         
         if (histLeft.GetEntries() >= 5) {
-            TF1 gaussFitLeft(Form("gaussFitLeftY_%d", eventID), "gaus", -30.0, 30.0);
+            TF1 gaussFitLeft(Form("gaussFitLeftY_%d", eventID), "gaus", -50.0, 50.0);
             
             double meanInit = histLeft.GetMean();
             double rmsInit = histLeft.GetRMS();
@@ -447,24 +418,24 @@ std::pair<double, double> MySensitiveDetector::PerformSensorGaussianFit(
             
             gaussFitLeft.SetParameters(maxVal, meanInit, initialSigma);
             gaussFitLeft.SetParLimits(0, 0.1, maxVal * 2.0);
-            gaussFitLeft.SetParLimits(1, -25.0, 25.0);
+            gaussFitLeft.SetParLimits(1, -50.0, 50.0);
             gaussFitLeft.SetParLimits(2, 1.0, 15.0);
             
             if (histLeft.Fit(&gaussFitLeft, "QN0") == 0) {
                 double fitMean = gaussFitLeft.GetParameter(1);
                 double fitSigma = gaussFitLeft.GetParameter(2);
                 
-                if (std::abs(fitMean) < 30.0 && fitSigma >= 1.0 && fitSigma <= 25.0) {
+                if (std::abs(fitMean) < 55.0 && fitSigma >= 0.5 && fitSigma <= 30.0) {
                     Py2 = fitMean;
                     sigmaY2 = fitSigma;
                     canFitY = true;
                 } else {
-                    Py2 = std::min(std::max(histLeft.GetMean(), -25.0), 25.0);
+                    Py2 = std::min(std::max(histLeft.GetMean(), -50.0), 50.0);
                     sigmaY2 = std::min(std::max(histLeft.GetRMS(), 2.0), 10.0);
                     canFitY = true;
                 }
             } else {
-                Py2 = std::min(std::max(histLeft.GetMean(), -25.0), 25.0);
+                Py2 = std::min(std::max(histLeft.GetMean(), -50.0), 50.0);
                 sigmaY2 = std::min(std::max(histLeft.GetRMS(), 2.0), 10.0);
                 canFitY = true;
             }
@@ -498,7 +469,7 @@ std::pair<double, double> MySensitiveDetector::PerformSensorGaussianFit(
     }
     
     // Check if reconstructed positions are physically reasonable
-    if (std::abs(reconstructedX) > 25.0 || std::abs(reconstructedY) > 25.0) {
+    if (std::abs(reconstructedX) > 50.0 || std::abs(reconstructedY) > 50.0) {
         reconstructedX = 0.0;
         reconstructedY = 0.0;
     }
@@ -566,7 +537,7 @@ G4bool MySensitiveDetector::ProcessHits(G4Step *aStep, G4TouchableHistory*) {
     
     SensorCollection->insert(aSensorHit);
     
-    // Record data - using ACTUAL photon hit positions (not calculated sensor positions)
+    // Record data - using ACTUAL photon hit positions 
     double actualX = posPhotons.x()/mm;
     double actualY = posPhotons.y()/mm;
     
@@ -578,19 +549,19 @@ G4bool MySensitiveDetector::ProcessHits(G4Step *aStep, G4TouchableHistory*) {
     
     // Determine correct ntuple index and record ACTUAL positions
     if (volumeName == "sensor_Vol1") {
-        man->FillH1(0, copyNo);  // Right sensors
+        
         RecordSensorData(volumeName, 0, actualX, actualY, evt, copyNo);
     } 
     else if (volumeName == "sensor_Vol2") {
-        man->FillH1(2, copyNo - 50);  // Left sensors
+        
         RecordSensorData(volumeName, 1, actualX, actualY, evt, copyNo);
     } 
     else if (volumeName == "sensor_Vol3") {
-        man->FillH1(1, copyNo - 25);  // Top sensors
+       
         RecordSensorData(volumeName, 2, actualX, actualY, evt, copyNo);
     } 
     else if (volumeName == "sensor_Vol4") {
-        man->FillH1(3, copyNo - 75);  // Bottom sensors
+    
         RecordSensorData(volumeName, 3, actualX, actualY, evt, copyNo);
     }
     else {
@@ -676,7 +647,7 @@ void MySensitiveDetector::EndOfEvent(G4HCofThisEvent* HCE) {
                 topX, topY, bottomX, bottomY, evtID);
             
             // Only store if fit produced reasonable values
-            if (std::abs(xGauss) < 30.0 && std::abs(yGauss) < 30.0) {
+            if (std::abs(xGauss) < 50.0 && std::abs(yGauss) < 50.0) {
                 // Store Gaussian fit results
                 man->FillH2(0, xGauss, yGauss);  // Gaussian fit positions
                 man->FillNtupleDColumn(4, 0, xGauss);
@@ -710,5 +681,5 @@ void MySensitiveDetector::EndOfEvent(G4HCofThisEvent* HCE) {
         }
     }
     
-    // DO NOT clear SensorCollection - Geant4 manages it
+    
 }

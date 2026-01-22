@@ -33,7 +33,7 @@ PG::~PG()
 
 void PG::GeneratePrimaries(G4Event* anEvent)
 {
-  // Get the particle from the particle table (in this case, an alpha particle)
+  // Get the particle from the particle table 
     G4ParticleTable* particleTable = G4ParticleTable::GetParticleTable();
     G4ParticleDefinition* particle = particleTable->FindParticle("neutron");
 

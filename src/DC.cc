@@ -29,12 +29,12 @@
 
 #include <cmath>
 
-// Constructor - simplified
+// Constructor 
 DC::DC(G4double density, G4double collimatorLength)
     : G4VUserDetectorConstruction(),
       fDensity(density),
       fCollimatorLength(collimatorLength),
-      fTeflon(nullptr),           // Only keep Teflon
+      fTeflon(nullptr),           
       fSipmSurf(nullptr),
       fMylarSurf(nullptr),
       fWorldPhys(nullptr),
@@ -44,7 +44,7 @@ DC::DC(G4double density, G4double collimatorLength)
 {
 }
 
-// Destructor - simplified
+// Destructor 
 DC::~DC()
 {
     // Clean up optical surfaces
@@ -80,7 +80,7 @@ void DC::DefineMaterials()
                                         kStateGas, 293.15 * kelvin, 1.0 * atmosphere);
     Ar_gas->AddElement(Ar, 1);
 
-    // FIXED: Ar:CF4 (90:10) at REALISTIC pressure (1 atm instead of 0.03 bar)
+
     // Density ~1.6 mg/cm³ for Ar:CF4 90:10 at 1 atm (calculated from partial pressures)
     G4Material* Ar_CF4 = new G4Material("Ar_CF4", 1.6 * mg / cm3, 2, 
                                         kStateGas, 293.15 * kelvin, 1.0 * atmosphere);  // CHANGED TO 1 ATM
@@ -305,7 +305,7 @@ G4VPhysicalVolume* DC::Construct()
     G4VPhysicalVolume* fPMylK = new G4PVPlacement(0, G4ThreeVector(0, 0, -mylPos/2), 
                                                  fLMyl, "MylK", fWorldLog, false, 1, fCheckOverlaps);
     
-    // HDPE converter
+ // HDPE converter
     G4double convThickness = 0.01 * mm;
     G4double convPos = mylPos/2 + mylThickness/2 + convThickness/2;
 
@@ -315,74 +315,102 @@ G4VPhysicalVolume* DC::Construct()
     new G4PVPlacement(0, G4ThreeVector(0, 0, convPos), fLConv, "Conv", 
                      fWorldLog, false, 0, fCheckOverlaps);
     
-    // SiPM sensors - Placed at the END of collimator holes (facing center)
-G4Box* sSiPM = new G4Box("sipm", sipmWidth/2, sipmSize/2, sipmSize/2);
+   // SiPM sensors - Placed at the END of collimator holes (facing center)
+    G4Box* sSiPM = new G4Box("sipm", sipmWidth/2, sipmSize/2, sipmSize/2);
 
-// Create 4 logical volumes for sensors (one for each side)
-G4LogicalVolume* sipmLog1 = new G4LogicalVolume(sSiPM, sensor, "sensor_log1"); // RIGHT
-G4LogicalVolume* sipmLog2 = new G4LogicalVolume(sSiPM, sensor, "sensor_log2"); // LEFT
-G4LogicalVolume* sipmLog3 = new G4LogicalVolume(sSiPM, sensor, "sensor_log3"); // TOP
-G4LogicalVolume* sipmLog4 = new G4LogicalVolume(sSiPM, sensor, "sensor_log4"); // BOTTOM
+    // Create 4 logical volumes for sensors (one for each side)
+    G4LogicalVolume* sipmLog1 = new G4LogicalVolume(sSiPM, sensor, "sensor_log1"); // RIGHT
+    G4LogicalVolume* sipmLog2 = new G4LogicalVolume(sSiPM, sensor, "sensor_log2"); // LEFT
+    G4LogicalVolume* sipmLog3 = new G4LogicalVolume(sSiPM, sensor, "sensor_log3"); // TOP
+    G4LogicalVolume* sipmLog4 = new G4LogicalVolume(sSiPM, sensor, "sensor_log4"); // BOTTOM
 
-// Place sensors at the END of each collimator hole (facing toward center)
-copyNo = 0;
-for (G4int i = 0; i < 4; i++) {
-    G4LogicalVolume* currentSipmLog = nullptr;
-    G4String volumeName;
-    
-    if (i == 0) { // Right side
-        currentSipmLog = sipmLog1;
-        volumeName = "sensor_Vol1";
-    } else if (i == 1) { // Top side
-        currentSipmLog = sipmLog3;
-        volumeName = "sensor_Vol3";
-    } else if (i == 2) { // Left side
-        currentSipmLog = sipmLog2;
-        volumeName = "sensor_Vol2";
-    } else { // Bottom side
-        currentSipmLog = sipmLog4;
-        volumeName = "sensor_Vol4";
+    // Place sensors at the END of each collimator hole (facing toward center)
+    copyNo = 0;
+    for (G4int i = 0; i < 4; i++) {
+        G4LogicalVolume* currentSipmLog = nullptr;
+        G4String volumeName;
+        G4String sideName;  // ADD THIS LINE
+        
+        if (i == 0) { // Right side
+            currentSipmLog = sipmLog1;
+            volumeName = "sensor_Vol1";
+            sideName = "RIGHT";  // ADD THIS
+        } else if (i == 1) { // Top side
+            currentSipmLog = sipmLog3;
+            volumeName = "sensor_Vol3";
+            sideName = "TOP";  // ADD THIS
+        } else if (i == 2) { // Left side
+            currentSipmLog = sipmLog2;
+            volumeName = "sensor_Vol2";
+            sideName = "LEFT";  // ADD THIS
+        } else { // Bottom side
+            currentSipmLog = sipmLog4;
+            volumeName = "sensor_Vol4";
+            sideName = "BOTTOM";  // ADD THIS
+        }
+        
+        for (G4int j = 0; j < nCells; j++) {
+            G4double xPos = 0, yPos = 0;
+            auto sipmRot = new G4RotationMatrix();
+            
+            G4double sensorCenterOffset = (-nCells/2.0 + j + 0.5) * cellSize;
+            
+            if (i == 0) { // RIGHT side (+X)
+                xPos = collSize/2 + cellLength - sipmWidth/2;
+                yPos = sensorCenterOffset;
+                sipmRot->rotateY(90*deg);
+            }
+            else if (i == 1) { // TOP side (+Y)
+                xPos = sensorCenterOffset;
+                yPos = collSize/2 + cellLength - sipmWidth/2;
+                sipmRot->rotateX(-90*deg);
+            }
+            else if (i == 2) { // LEFT side (-X)
+                xPos = -(collSize/2 + cellLength - sipmWidth/2);
+                yPos = sensorCenterOffset;
+                sipmRot->rotateY(-90*deg);
+            }
+            else if (i == 3) { // BOTTOM side (-Y)
+                xPos = sensorCenterOffset;
+                yPos = -(collSize/2 + cellLength - sipmWidth/2);
+                sipmRot->rotateX(90*deg);  
+            }
+            
+            // DEBUG: Print rotation for first sensor of each side
+            if (j == 0) {
+                G4cout << "\n=== " << sideName << " SENSOR DEBUG ===" << G4endl;
+                G4cout << "Side: " << sideName << ", Position: (" 
+                       << xPos/mm << ", " << yPos/mm << ", 0) mm" << G4endl;
+                
+                // Calculate normal vector
+                G4ThreeVector localNormal(0, 0, 1);  
+                G4ThreeVector globalNormal = sipmRot->operator()(localNormal);
+                G4cout << "Sensor normal vector: (" 
+                       << globalNormal.x() << ", " 
+                       << globalNormal.y() << ", " 
+                       << globalNormal.z() << ")" << G4endl;
+                
+                // Direction to center
+                G4ThreeVector sensorPos(xPos, yPos, 0);
+                G4ThreeVector toCenter = G4ThreeVector(0,0,0) - sensorPos;
+                toCenter = toCenter.unit();
+                G4cout << "Direction to center: (" 
+                       << toCenter.x() << ", " 
+                       << toCenter.y() << ", " 
+                       << toCenter.z() << ")" << G4endl;
+                
+                // Check alignment
+                double dot = globalNormal.dot(toCenter);
+                G4cout << "Dot product (should be ~1): " << dot << G4endl;
+                if (dot < 0.9) {
+                    G4cout << "WARNING: Sensor NOT facing center properly!" << G4endl;
+                }
+            }
+            
+            new G4PVPlacement(sipmRot, G4ThreeVector(xPos, yPos, 0), 
+                currentSipmLog, volumeName, fWorldLog, false, copyNo++, fCheckOverlaps);
+        }
     }
-    
-    for (G4int j = 0; j < nCells; j++) {
-        G4double xPos = 0, yPos = 0;
-        auto sipmRot = new G4RotationMatrix();
-        
-        G4double sensorCenterOffset = (-nCells/2.0 + j + 0.5) * cellSize;
-        
-        // KEY FIX: Place sensor at the END of the collimator hole
-        // The collimator hole extends from x = collSize/2 to x = collSize/2 + cellLength
-        // We want the sensor at the END (outer edge)
-        
-        if (i == 0) { // RIGHT side (+X)
-            // Collimator center is at collSize/2 + cellLength/2
-            // Sensor should be at OUTER edge: collSize/2 + cellLength
-            xPos = collSize/2 + cellLength - sipmWidth/2;  // At END of hole
-            yPos = sensorCenterOffset;
-            sipmRot->rotateY(90*deg);  // Face -X (toward center)
-        }
-        else if (i == 1) { // TOP side (+Y)
-            xPos = sensorCenterOffset;
-            yPos = collSize/2 + cellLength - sipmWidth/2;  // At END of hole
-            sipmRot->rotateX(-90*deg); // Face -Y (toward center)
-        }
-        else if (i == 2) { // LEFT side (-X)
-            xPos = -(collSize/2 + cellLength - sipmWidth/2);  // At END of hole
-            yPos = sensorCenterOffset;
-            sipmRot->rotateY(-90*deg); // Face +X (toward center)
-        }
-        else if (i == 3) { // BOTTOM side (-Y)
-            xPos = sensorCenterOffset;
-            yPos = -(collSize/2 + cellLength - sipmWidth/2);  // At END of hole
-            sipmRot->rotateX(90*deg);  // Face +Y (toward center)
-        }
-        
-        new G4PVPlacement(sipmRot, G4ThreeVector(xPos, yPos, 0), 
-            currentSipmLog, volumeName, fWorldLog, false, copyNo++, fCheckOverlaps);
-    }
-}
-
-
 // Add debug output to verify
 G4cout << "\n=== SENSOR POSITION VERIFICATION ===" << G4endl;
 G4cout << "Collimator hole extends from: " << collSize/2 << " to " << collSize/2 + cellLength << " mm" << G4endl;
@@ -440,7 +468,7 @@ G4cout << "====================================\n" << G4endl;
     // Visualization attributes - UPDATED for better debugging
     fLCell->SetVisAttributes(G4VisAttributes(G4Colour(1.0, 1.0, 0.0, 0.2))); // Yellow, very transparent
     fLMyl->SetVisAttributes(G4VisAttributes(G4Colour(0.8, 0.8, 0.8, 0.3))); // Grey, transparent
-    fLConv->SetVisAttributes(G4VisAttributes(G4Colour(0.0, 1.0, 0.0, 0.5))); // Green, transparent
+    fLConv->SetVisAttributes(G4VisAttributes(G4Colour(0.0, 1.0, 0.0, 0.5))); // Green, transparent 
     
     // Make sensors SOLID and BRIGHT for easy visualization
     G4VisAttributes sensorVis1(G4Colour(1.0, 0.0, 0.0)); // Solid red for right sensors
@@ -460,18 +488,14 @@ G4cout << "====================================\n" << G4endl;
     sipmLog4->SetVisAttributes(sensorVis4);
     
     fWorldLog->SetVisAttributes(G4VisAttributes::GetInvisible());
-    
-    // Print geometry summary
-    G4cout << "\n=== GEOMETRY SUMMARY ===" << G4endl;
-    G4cout << "Collimator size: " << collSize/mm << " mm" << G4endl;
-    G4cout << "Cell size: " << cellSize/mm << " mm" << G4endl;
-    G4cout << "Hole size: " << sipmSize/mm << " mm" << G4endl;
-    G4cout << "Collimator length: " << cellLength/mm << " mm" << G4endl;
-    G4cout << "Number of cells per side: " << nCells << G4endl;
-    G4cout << "Total sensors: " << 4*nCells << G4endl;
-    G4cout << "Gas pressure: 1.0 atmosphere" << G4endl;
-    G4cout << "Gas density: " << atmosphere->GetDensity()/(mg/cm3) << " mg/cm3" << G4endl;
-    G4cout << "========================\n" << G4endl;
+   for (int j = 0; j < nCells; j++) {
+    G4double xPos = (-nCells/2.0 + j + 0.5) * cellSize;
+    G4double yPos = -(collSize/2 + cellLength - sipmWidth/2);
+    G4cout << "  Sensor " << (75+j) << ": (" 
+           << xPos/mm << ", " << yPos/mm << ", 0) mm" << G4endl;
+}
+
+
     
     return fWorldPhys;
 }

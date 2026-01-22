@@ -3,7 +3,7 @@
 
 #include <iomanip>
 
-// Define the allocator with the correct name
+
 G4Allocator<SensorHit> SensorHitsAllocator;
 
 SensorHit::SensorHit()
